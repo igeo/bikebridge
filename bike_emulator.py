@@ -1,17 +1,181 @@
+import os
 import asyncio
 import struct
 import time
 import math
+import threading
+import traceback
 from typing import List, Dict, Any
 
 from dbus_next.aio import MessageBus
 from dbus_next.constants import BusType
 from dbus_next.service import ServiceInterface, method, dbus_property, PropertyAccess, Variant
 
+from flask import Flask, render_template, jsonify, request
+from flask_cors import CORS
+
 # BLE Service and Characteristic UUIDs
 CYCLING_POWER_SERVICE_UUID = "00001818-0000-1000-8000-00805f9b34fb"
 CYCLING_POWER_MEASUREMENT_UUID = "00002a63-0000-1000-8000-00805f9b34fb"
 
+# ============================================
+# Shared State for Web Interface Control
+# ============================================
+class BikeState:
+    """Thread-safe shared state between web server and BLE emulator."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cadence = 60  # RPM (0-200)
+        self._torque = 30   # % (1-100)
+        self._calibration_factor = 1/18  # Default calibration factor
+        self._power = 0     # Calculated power (read-only)
+    
+    @property
+    def cadence(self):
+        with self._lock:
+            return self._cadence
+    
+    @cadence.setter
+    def cadence(self, value):
+        with self._lock:
+            try:
+                self._cadence = max(0, min(200, int(value)))
+            except (ValueError, TypeError):
+                print(f"Invalid cadence value: {value}")
+    
+    @property
+    def torque(self):
+        with self._lock:
+            return self._torque
+    
+    @torque.setter
+    def torque(self, value):
+        with self._lock:
+            try:
+                self._torque = max(1, min(100, int(value)))
+            except (ValueError, TypeError):
+                print(f"Invalid torque value: {value}")
+    
+    @property
+    def calibration_factor(self):
+        with self._lock:
+            return self._calibration_factor
+    
+    @calibration_factor.setter
+    def calibration_factor(self, value):
+        with self._lock:
+            try:
+                self._calibration_factor = max(0.001, min(1.0, float(value)))
+            except (ValueError, TypeError):
+                print(f"Invalid calibration value: {value}")
+    
+    @property
+    def power(self):
+        with self._lock:
+            return self._power
+    
+    @power.setter
+    def power(self, value):
+        with self._lock:
+            try:
+                self._power = int(value)
+            except (ValueError, TypeError):
+                 # Fallback/ignore if value is weird, though usually calculated internally
+                 pass
+    
+    def calculate_power(self):
+        """Calculate power: P = cadence * torque * calibration_factor"""
+        with self._lock:
+            # Re-read values safely inside the lock if we weren't already holding it?
+            # actually we are calling properties which lock. 
+            # But for atomicity in calculation:
+            c = self._cadence
+            t = self._torque
+            f = self._calibration_factor
+        return int(c * t * f)
+    
+    def get_all(self):
+        """Get all state values as a dictionary."""
+        with self._lock:
+            return {
+                'cadence': self._cadence,
+                'torque': self._torque,
+                'calibration_factor': self._calibration_factor,
+                'power': self._power
+            }
+
+# Global shared state
+bike_state = BikeState()
+
+# ============================================
+# Flask Web Server
+# ============================================
+# Ensure we find the templates folder relative to this script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+template_dir = os.path.join(script_dir, 'templates')
+app = Flask(__name__, template_folder=template_dir)
+CORS(app)
+
+@app.route('/')
+def index():
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        traceback.print_exc()
+        return f"Error loading template: {str(e)}", 500
+
+@app.route('/api/state', methods=['GET'])
+def get_state():
+    """Get current bike state."""
+    try:
+        return jsonify(bike_state.get_all())
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cadence', methods=['POST'])
+def set_cadence():
+    """Set cadence value."""
+    try:
+        data = request.get_json(force=True)
+        if data and 'value' in data:
+            bike_state.cadence = data['value']
+        return jsonify({'cadence': bike_state.cadence})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/torque', methods=['POST'])
+def set_torque():
+    """Set torque value."""
+    try:
+        data = request.get_json(force=True)
+        if data and 'value' in data:
+            bike_state.torque = data['value']
+        return jsonify({'torque': bike_state.torque})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/calibration', methods=['POST'])
+def set_calibration():
+    """Set calibration factor."""
+    try:
+        data = request.get_json(force=True)
+        if data and 'value' in data:
+            bike_state.calibration_factor = data['value']
+        return jsonify({'calibration_factor': bike_state.calibration_factor})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+def run_flask():
+    """Run Flask server in a separate thread."""
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
+# ============================================
+# BLE Classes
+# ============================================
 class Application(ServiceInterface):
     def __init__(self, services):
         super().__init__('org.freedesktop.DBus.ObjectManager')
@@ -110,17 +274,21 @@ class CyclingPowerMeasurementChrc(GattCharacteristic):
 
     async def update_simulation(self):
         print("Starting simulation loop...")
+        print("Web interface available at http://localhost:5000")
         while True:
-            # Simulate power data (sine wave 90-130 W)
-            # Center at 110, amplitude 20
-            self.power = int(110 + 20 * math.sin(time.time() / 5.0))
+            # Calculate power from web interface values
+            self.power = bike_state.calculate_power()
+            bike_state.power = self.power
             
-            # Simulate Cadence (e.g., 90 RPM)
-            # 90 RPM = 1.5 revs per second
-            # Update cumulative revs
-            self.cum_crank_revs += 1 
+            # Update cumulative revs based on cadence
+            # cadence is in RPM, so revs per second = cadence / 60
+            cadence = bike_state.cadence
+            revs_per_second = cadence / 60.0
+            
+            # Increment cumulative crank revs
+            self.cum_crank_revs += int(revs_per_second)
+            
             # Last crank event time in 1/1024 seconds
-            # current time * 1024
             current_time_unit = int(time.time() * 1024) % 65536
             self.last_crank_event_time = current_time_unit
 
@@ -132,7 +300,6 @@ class CyclingPowerMeasurementChrc(GattCharacteristic):
             
             # Format: Flags (uint16), Instantaneous Power (sint16), 
             # Cumulative Crank Revs (uint16), Last Crank Event Time (uint16)
-            # Note: struct.pack uses < for little-endian
             power_data = struct.pack('<HhHH', 
                                      flags, 
                                      self.power, 
@@ -141,14 +308,12 @@ class CyclingPowerMeasurementChrc(GattCharacteristic):
             
             self._value = power_data
             
-            print(f"Update: Power={self.power}W, Flags={flags:#x}, Data={power_data.hex()}")
+            print(f"Update: Power={self.power}W, Cadence={cadence}RPM, Torque={bike_state.torque}%, Cal={bike_state.calibration_factor:.4f}")
             
             if self.notifying:
                 print("Sending notification...")
                 self.emit_properties_changed({'Value': power_data})
             
-            # 90 RPM is 1.5 rev/sec -> sleep 0.66s would be realistic for event based, 
-            # but for notification updates 1HZ is standard for many power meters.
             await asyncio.sleep(1)
 
 class Agent(ServiceInterface):
@@ -181,13 +346,11 @@ class Agent(ServiceInterface):
     @method()
     def RequestConfirmation(self, device: 'o', passkey: 'u'):
         print(f"RequestConfirmation {device} {passkey}")
-        # Just confirm
         return
 
     @method()
     def RequestAuthorization(self, device: 'o'):
         print(f"RequestAuthorization {device}")
-        # Just authorize
         return
 
     @method()
@@ -241,6 +404,11 @@ class StaticCharacteristic(GattCharacteristic):
         return self._value
 
 async def main():
+    # Start Flask web server in a background thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("Web interface starting on http://0.0.0.0:5000")
+    
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     # Get the DBus adapter
@@ -249,8 +417,6 @@ async def main():
         adapter_obj = bus.get_proxy_object('org.bluez', adapter_path, await bus.introspect('org.bluez', adapter_path))
     except Exception as e:
         print(f"Error getting adapter {adapter_path}: {e}")
-        # Try to find any adapter if hci0 fails
-        # In a robust app we might list adapters, but for Pi Zero 2W usually hci0 is it.
         return
 
     adapter_props = adapter_obj.get_interface('org.freedesktop.DBus.Properties')
@@ -261,14 +427,12 @@ async def main():
     await adapter_props.call_set('org.bluez.Adapter1', 'Discoverable', Variant('b', True))
     await adapter_props.call_set('org.bluez.Adapter1', 'Pairable', Variant('b', True))
     await adapter_props.call_set('org.bluez.Adapter1', 'PairableTimeout', Variant('u', 0))
-    # Alias
     await adapter_props.call_set('org.bluez.Adapter1', 'Alias', Variant('s', 'Gemini Bike'))
 
     # Setup Agent
     agent = Agent(0)
     bus.export(agent.path, agent)
     
-    # Get AgentManager1 from the root /org/bluez path
     bluez_obj = bus.get_proxy_object('org.bluez', '/org/bluez', await bus.introspect('org.bluez', '/org/bluez'))
     agent_manager = bluez_obj.get_interface('org.bluez.AgentManager1')
 
@@ -280,46 +444,32 @@ async def main():
         print(f"Failed to register agent: {e}")
 
     # Setup Application (GATT)
-    # CP Service
     service_cp = GattService(CYCLING_POWER_SERVICE_UUID, True, 0)
     chrc_cp = CyclingPowerMeasurementChrc(service_cp, 0)
     
-    # Device Info Service
-    # Reuse standard GattService logic since DeviceInformationService is now just a pass class
-    # but we need to verify arguments.
-    # Actually, DeviceInformationService(index) would fail with standard GattService(uuid, primary, index) init signature
-    # So we should just use GattService directly here or fix the class. 
-    # Let's just use GattService directly to be safe and clean.
     service_dis = GattService('0000180a-0000-1000-8000-00805f9b34fb', True, 1)
-    # Manufacturer
     StaticCharacteristic('00002a29-0000-1000-8000-00805f9b34fb', ['read'], service_dis, 0, b'Google DeepMind')
-    # Model
     StaticCharacteristic('00002a24-0000-1000-8000-00805f9b34fb', ['read'], service_dis, 1, b'Gemini-Bike-01')
 
-    app = Application([service_cp, service_dis])
+    app_ble = Application([service_cp, service_dis])
 
-    # Export Application objects
-    bus.export(app.path, app) 
+    bus.export(app_ble.path, app_ble) 
     
-    # Export all services and chars
-    for service in app.services:
+    for service in app_ble.services:
         bus.export(service.path, service)
         for c in service.characteristics:
             bus.export(c.path, c)
 
-    # Register Application
     gatt_manager = adapter_obj.get_interface('org.bluez.GattManager1')
     print("Registering GATT Application...")
     try:
-        await gatt_manager.call_register_application(app.path, {})
+        await gatt_manager.call_register_application(app_ble.path, {})
     except Exception as e:
         print(f"Failed to register application: {e}")
 
-    # Setup Advertisement
     advertisement = LEAdvertisement(0)
     bus.export(advertisement.path, advertisement)
 
-    # Register Advertisement
     advertising_manager = adapter_obj.get_interface('org.bluez.LEAdvertisingManager1')
     print("Registering Advertisement...")
     try:
@@ -328,9 +478,9 @@ async def main():
         print(f"Failed to register advertisement: {e}")
 
     print("Gemini Bike Emulator Running...")
+    print("Web interface: http://localhost:5000")
     print("Press Ctrl+C to stop.")
 
-    # Run simulation
     await chrc_cp.update_simulation()
 
 if __name__ == '__main__':

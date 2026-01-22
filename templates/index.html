@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Bike Emulator Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f0f1a;
+            --bg-secondary: #1a1a2e;
+            --bg-card: #252540;
+            --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --accent-blue: #667eea;
+            --accent-purple: #764ba2;
+            --accent-cyan: #00d4ff;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0c0;
+            --text-muted: #6b6b8d;
+            --border-color: rgba(255, 255, 255, 0.1);
+            --success: #4ade80;
+            --warning: #facc15;
+            --danger: #f87171;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            color: var(--text-primary);
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .bg-animation::before {
+            content: '';
+            position: absolute;
+            width: 150%;
+            height: 150%;
+            top: -25%;
+            left: -25%;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.15) 0%, transparent 30%),
+                radial-gradient(circle at 80% 20%, rgba(118, 75, 162, 0.15) 0%, transparent 30%),
+                radial-gradient(circle at 50% 50%, rgba(0, 212, 255, 0.05) 0%, transparent 50%);
+            animation: bgPulse 15s ease-in-out infinite;
+        }
+
+        @keyframes bgPulse {
+
+            0%,
+            100% {
+                transform: scale(1) rotate(0deg);
+            }
+
+            50% {
+                transform: scale(1.1) rotate(5deg);
+            }
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 10px 15px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 400;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-secondary);
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-top: 16px;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.6;
+                transform: scale(0.9);
+            }
+        }
+
+        /* Power Display */
+        .power-display {
+            background: var(--bg-card);
+            border-radius: 24px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 16px;
+            border: 1px solid var(--border-color);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .power-display::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent-gradient);
+        }
+
+        .power-value {
+            font-size: 4rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .power-unit {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .power-formula {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        /* Slider Card */
+        .slider-card {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border: 1px solid var(--border-color);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .slider-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.15);
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .slider-label {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .slider-value-display {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .slider-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        .slider-unit {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        /* Custom Range Slider */
+        .slider-container {
+            position: relative;
+            padding: 10px 0;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            outline: none;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .slider-range-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .slider-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .adjust-btn {
+            width: 40px;
+            height: 40px;
+            flex-shrink: 0;
+            border-radius: 50%;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--accent-blue);
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+            padding-bottom: 4px;
+        }
+
+        .adjust-btn:active {
+            transform: scale(0.95);
+            background: var(--bg-card);
+        }
+
+        /* Collapsible Calibration Section */
+        .calibration-section {
+            margin-top: 24px;
+        }
+
+        .calibration-toggle {
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 12px 20px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.3s ease;
+        }
+
+        .calibration-toggle:hover {
+            background: var(--bg-card);
+            color: var(--text-secondary);
+        }
+
+        .calibration-toggle .arrow {
+            transition: transform 0.3s ease;
+        }
+
+        .calibration-toggle.open .arrow {
+            transform: rotate(180deg);
+        }
+
+        .calibration-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, padding 0.4s ease;
+        }
+
+        .calibration-content.open {
+            max-height: 200px;
+        }
+
+        .calibration-inner {
+            padding-top: 16px;
+        }
+
+        .calibration-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px dashed var(--border-color);
+        }
+
+        .calibration-warning {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: rgba(250, 204, 21, 0.1);
+            border-radius: 8px;
+            font-size: 0.8rem;
+            color: var(--warning);
+        }
+
+        .calibration-warning svg {
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 1rem;
+            color: var(--text-primary);
+            font-family: monospace;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="number"]:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .reset-btn {
+            margin-top: 12px;
+            width: 100%;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .reset-btn:hover {
+            background: var(--bg-secondary);
+            border-color: var(--accent-blue);
+            color: var(--text-primary);
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        .footer a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .container {
+                padding: 20px 16px;
+            }
+
+            .header h1 {
+                font-size: 1.6rem;
+            }
+
+            .power-value {
+                font-size: 3rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-animation"></div>
+
+    <div class="container">
+        <header class="header">
+            <h1>🚴 Gemini Bike Emulator</h1>
+            <p class="subtitle">Real-time BLE Power & Cadence Control</p>
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span>Broadcasting</span>
+            </div>
+        </header>
+
+        <!-- Power Display -->
+        <div class="power-display">
+            <div class="power-value" id="powerValue">0</div>
+            <div class="power-unit">Watts</div>
+            <div class="power-formula">P = Cadence × Torque × Calibration Factor</div>
+        </div>
+
+        <!-- Cadence Slider -->
+        <div class="slider-card">
+            <div class="slider-header">
+                <span class="slider-label">⚡ Cadence</span>
+                <div class="slider-value-display">
+                    <span class="slider-value" id="cadenceValue">60</span>
+                    <span class="slider-unit">RPM</span>
+                </div>
+            </div>
+            <div class="slider-wrapper">
+                <div class="adjust-btn" onclick="adjustSlider('cadenceSlider', -1)">-</div>
+                <div class="slider-container" style="flex-grow: 1;">
+                    <input type="range" id="cadenceSlider" min="0" max="200" value="60">
+                    <div class="slider-range-labels">
+                        <span>0</span>
+                        <span>100</span>
+                        <span>200</span>
+                    </div>
+                </div>
+                <div class="adjust-btn" onclick="adjustSlider('cadenceSlider', 1)">+</div>
+            </div>
+        </div>
+
+        <!-- Torque Slider -->
+        <div class="slider-card">
+            <div class="slider-header">
+                <span class="slider-label">💪 Torque</span>
+                <div class="slider-value-display">
+                    <span class="slider-value" id="torqueValue">30</span>
+                    <span class="slider-unit">%</span>
+                </div>
+            </div>
+            <div class="slider-wrapper">
+                <div class="adjust-btn" onclick="adjustSlider('torqueSlider', -1)">-</div>
+                <div class="slider-container" style="flex-grow: 1;">
+                    <input type="range" id="torqueSlider" min="1" max="100" value="30">
+                    <div class="slider-range-labels">
+                        <span>1</span>
+                        <span>50</span>
+                        <span>100</span>
+                    </div>
+                </div>
+                <div class="adjust-btn" onclick="adjustSlider('torqueSlider', 1)">+</div>
+            </div>
+        </div>
+
+        <!-- Collapsible Calibration Section -->
+        <div class="calibration-section">
+            <button class="calibration-toggle" id="calibrationToggle">
+                <span>⚙️ Advanced Settings</span>
+                <span class="arrow">▼</span>
+            </button>
+            <div class="calibration-content" id="calibrationContent">
+                <div class="calibration-inner">
+                    <div class="calibration-card">
+                        <div class="calibration-warning">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path
+                                    d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                <line x1="12" y1="9" x2="12" y2="13" />
+                                <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                            <span>Changing the calibration factor may affect power accuracy. Default is 1/18
+                                (≈0.0556).</span>
+                        </div>
+                        <label
+                            style="display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 0.85rem;">Calibration
+                            Factor</label>
+                        <input type="number" id="calibrationInput" step="0.001" min="0.001" max="1" value="0.0556">
+                        <button class="reset-btn" id="resetCalibration">Reset to Default (1/18)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>Gemini Bike Emulator &copy; 2026 | <a href="#">Google DeepMind</a></p>
+        </footer>
+    </div>
+
+    <script>
+        // Elements
+        const cadenceSlider = document.getElementById('cadenceSlider');
+        const cadenceValue = document.getElementById('cadenceValue');
+        const torqueSlider = document.getElementById('torqueSlider');
+        const torqueValue = document.getElementById('torqueValue');
+        const calibrationInput = document.getElementById('calibrationInput');
+        const calibrationToggle = document.getElementById('calibrationToggle');
+        const calibrationContent = document.getElementById('calibrationContent');
+        const resetCalibration = document.getElementById('resetCalibration');
+        const powerValue = document.getElementById('powerValue');
+
+        const DEFAULT_CALIBRATION = 1 / 18;
+
+        function adjustSlider(id, delta) {
+            const slider = document.getElementById(id);
+            const newValue = parseInt(slider.value) + delta;
+            if (newValue >= parseInt(slider.min) && newValue <= parseInt(slider.max)) {
+                slider.value = newValue;
+                // Trigger input event manually to update display and send API request
+                slider.dispatchEvent(new Event('input'));
+            }
+        }
+
+        // Debounce helper
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // API calls
+        async function updateCadence(value) {
+            try {
+                const response = await fetch('/api/cadence', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: parseInt(value) })
+                });
+                const data = await response.json();
+                cadenceValue.textContent = data.cadence;
+                updatePowerDisplay();
+            } catch (err) {
+                console.error('Error updating cadence:', err);
+            }
+        }
+
+        async function updateTorque(value) {
+            try {
+                const response = await fetch('/api/torque', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: parseInt(value) })
+                });
+                const data = await response.json();
+                torqueValue.textContent = data.torque;
+                updatePowerDisplay();
+            } catch (err) {
+                console.error('Error updating torque:', err);
+            }
+        }
+
+        async function updateCalibration(value) {
+            try {
+                const response = await fetch('/api/calibration', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: parseFloat(value) })
+                });
+                const data = await response.json();
+                calibrationInput.value = data.calibration_factor.toFixed(4);
+                updatePowerDisplay();
+            } catch (err) {
+                console.error('Error updating calibration:', err);
+            }
+        }
+
+        async function fetchState() {
+            try {
+                const response = await fetch('/api/state');
+                const data = await response.json();
+                cadenceSlider.value = data.cadence;
+                cadenceValue.textContent = data.cadence;
+                torqueSlider.value = data.torque;
+                torqueValue.textContent = data.torque;
+                calibrationInput.value = data.calibration_factor.toFixed(4);
+                powerValue.textContent = data.power;
+            } catch (err) {
+                console.error('Error fetching state:', err);
+            }
+        }
+
+        function updatePowerDisplay() {
+            const cadence = parseInt(cadenceSlider.value);
+            const torque = parseInt(torqueSlider.value);
+            const calibration = parseFloat(calibrationInput.value);
+            const power = Math.round(cadence * torque * calibration);
+            powerValue.textContent = power;
+        }
+
+        // Debounced API calls
+        const debouncedCadence = debounce(updateCadence, 100);
+        const debouncedTorque = debounce(updateTorque, 100);
+        const debouncedCalibration = debounce(updateCalibration, 300);
+
+        // Event listeners
+        cadenceSlider.addEventListener('input', (e) => {
+            cadenceValue.textContent = e.target.value;
+            updatePowerDisplay();
+            debouncedCadence(e.target.value);
+        });
+
+        torqueSlider.addEventListener('input', (e) => {
+            torqueValue.textContent = e.target.value;
+            updatePowerDisplay();
+            debouncedTorque(e.target.value);
+        });
+
+        calibrationInput.addEventListener('input', (e) => {
+            updatePowerDisplay();
+            debouncedCalibration(e.target.value);
+        });
+
+        calibrationToggle.addEventListener('click', () => {
+            calibrationToggle.classList.toggle('open');
+            calibrationContent.classList.toggle('open');
+        });
+
+        resetCalibration.addEventListener('click', () => {
+            calibrationInput.value = DEFAULT_CALIBRATION.toFixed(4);
+            updatePowerDisplay();
+            updateCalibration(DEFAULT_CALIBRATION);
+        });
+
+        // Initial load
+        fetchState();
+
+        // Periodic refresh (every 2 seconds)
+        setInterval(fetchState, 2000);
+    </script>
+</body>
+
+</html>
