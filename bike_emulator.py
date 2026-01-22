@@ -228,6 +228,18 @@ class LEAdvertisement(ServiceInterface):
     def Release(self):
         print(f'{self.path}: Released!')
 
+class DeviceInformationService(GattService):
+    pass
+
+class StaticCharacteristic(GattCharacteristic):
+    def __init__(self, uuid, flags, service, index, value):
+        super().__init__(uuid, flags, service, index)
+        self._value = value
+
+    @method()
+    def ReadValue(self, options: 'a{sv}') -> 'ay':
+        return self._value
+
 async def main():
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
@@ -268,15 +280,32 @@ async def main():
         print(f"Failed to register agent: {e}")
 
     # Setup Application (GATT)
-    service = GattService(CYCLING_POWER_SERVICE_UUID, True, 0)
-    chrc = CyclingPowerMeasurementChrc(service, 0)
-    app = Application([service])
+    # CP Service
+    service_cp = GattService(CYCLING_POWER_SERVICE_UUID, True, 0)
+    chrc_cp = CyclingPowerMeasurementChrc(service_cp, 0)
+    
+    # Device Info Service
+    # Reuse standard GattService logic since DeviceInformationService is now just a pass class
+    # but we need to verify arguments.
+    # Actually, DeviceInformationService(index) would fail with standard GattService(uuid, primary, index) init signature
+    # So we should just use GattService directly here or fix the class. 
+    # Let's just use GattService directly to be safe and clean.
+    service_dis = GattService('0000180a-0000-1000-8000-00805f9b34fb', True, 1)
+    # Manufacturer
+    StaticCharacteristic('00002a29-0000-1000-8000-00805f9b34fb', ['read'], service_dis, 0, b'Google DeepMind')
+    # Model
+    StaticCharacteristic('00002a24-0000-1000-8000-00805f9b34fb', ['read'], service_dis, 1, b'Gemini-Bike-01')
+
+    app = Application([service_cp, service_dis])
 
     # Export Application objects
     bus.export(app.path, app) 
-    bus.export(service.path, service)
-    for c in service.characteristics:
-        bus.export(c.path, c)
+    
+    # Export all services and chars
+    for service in app.services:
+        bus.export(service.path, service)
+        for c in service.characteristics:
+            bus.export(c.path, c)
 
     # Register Application
     gatt_manager = adapter_obj.get_interface('org.bluez.GattManager1')
@@ -302,7 +331,7 @@ async def main():
     print("Press Ctrl+C to stop.")
 
     # Run simulation
-    await chrc.update_simulation()
+    await chrc_cp.update_simulation()
 
 if __name__ == '__main__':
     asyncio.run(main())
